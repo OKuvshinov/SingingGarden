@@ -10,18 +10,11 @@
  * =======================================================================
  */
 
-//#include "VL6180.h"
-#include "ultrasonic.h"
  
 #include "mbed.h"
 #include "XBeeLib.h"
 #if defined(ENABLE_LOGGING)
 #include "DigiLoggerMbedSerial.h"
-#include "DHT11.h"
-
-Ticker t1;
- 
-void send_temp_and_hum();
 
 using namespace DigiLog;
 #endif
@@ -36,39 +29,33 @@ using namespace DigiLog;
 #define PLAY_DURATION 7000
 #define MAX_VALUE 4000
 #define DATA_DIFF 2750
-
-void dist(int distance)
-{
-    
-}
-
-//VL6180 rf(I2C_SDA, I2C_SCL); //I2C sda and scl
-ultrasonic mu(D7, D9, 1, 1, &dist);    //Set the trigger pin to D7 and the echo pin to D9
-                                        //have updates every .1 seconds and a timeout after 1
-                                        //second, and call dist when the distance changes
-                                        
-DHT11 d(D13);
-
+                                    
 using namespace XBeeLib;
 
-int reading;
+int SendTimeout = 0;
 
 Serial *log_serial;
 
+DigitalOut led(PC_13);
+
+// read the input on analog pin 0:
+
+AnalogIn FR(PA_0);
+static int sensorFRValue = FR.read();
+// Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
+static float voltageFR = 0.0;
+
+AnalogIn Rain(PA_7);
+static int sensorRainValue = Rain.read();
+static float voltageRain = 0.0;
+
 char data[] = "";
-
-static float Temper = 0.0, Humi = 0.0;
-
-int cnt = 0;
-
-//XBeeZB xbee = XBeeZB(RADIO_TX, RADIO_RX, RADIO_RESET, NC, NC, 9600);
 
 static void send_data_to_coordinator(XBeeZB& xbee)
 {
     // формируем текст сообщения
-    //sprintf(data, "%.2f", reading);
-    //sprintf(data, "{Gdn:{DHT:{Temp:%.2f,Hum:%.2f}}}", Temper, Humi);
-    sprintf(data, "%.2f,%.2f,%d", Temper, Humi, reading);
+    sprintf(data, "%.2f,%.2f", voltageFR, voltageRain);
+    //sprintf(data, "%.2f", voltageRain);
     
     const uint16_t data_len = strlen(data);
 
@@ -123,7 +110,7 @@ int main()
 {
     log_serial = new Serial(DEBUG_TX, DEBUG_RX);
     log_serial->baud(9600);
-    log_serial->printf("Sample application to demo how to send unicast and broadcast data with the XBeeZB\r\n\r\n");
+    //log_serial->printf("Sample application to demo how to send unicast and broadcast data with the XBeeZB\r\n\r\n");
     log_serial->printf(XB_LIB_BANNER);
 
 #if defined(ENABLE_LOGGING)
@@ -145,86 +132,31 @@ int main()
 
     const RemoteXBeeZB remoteDevice = RemoteXBeeZB(REMOTE_NODE_ADDR64);
     
-    //t1.attach(&send_temp_and_hum, 0.5);
-    
-    // начинаем считывать данные с датчика
-    bool sent = false;
-    bool here = false;
-    char sendData = '\0';
-    //float prevVal = DATCHIK_MAX;
-    
-    int prev_data = MAX_VALUE;
-    int curr_data = prev_data;
- 
-    mu.startUpdates();//start mesuring the distance
-   
-    while(true)
-    {   
-        mu.checkDistance();
-        curr_data = mu.getCurrentDistance();
+    while (true)
+    {  
+        sensorFRValue = FR.read()*100;
+        voltageFR = (sensorFRValue+0.0) * (5.0 / 1024.0)+0.0;
         
-        wait_ms(2000);
-        if(cnt < 300) cnt++;
-        else cnt = 0;
+        sensorRainValue = Rain.read()*100;
+        voltageRain = sensorRainValue+0.0;
         
-        int error = 0;      
-        
-        if (/*curr_data <= 5000*/1) // исключаем "мусорные" показатели датчика
+        led = 1;
+        if (SendTimeout == 299)
         {
-            printf("Distance changed to %d cm     %d\r\n", curr_data/10, cnt);
-            
-            if (((curr_data + prev_data)/2 < 750) && (!here))
-            {
-                here = true;
-                reading = 1;
-                
-                error = d.readData();
-                Temper = d.readTemperature();
-                Humi = d.readHumidity();
-                
-                send_data_to_coordinator(xbee);
-                
-                wait_ms(PLAY_DURATION);
-            }
-            else if (((curr_data + prev_data)/2 > 1000) && (here))
-            {
-                here = false;
-                reading = 0;
-                
-                error = d.readData();
-                Temper = d.readTemperature();
-                Humi = d.readHumidity();
-                
-                send_data_to_coordinator(xbee);
-                
-                wait_ms(PLAY_DURATION);
-            }
-            prev_data = curr_data;
+            send_data_to_coordinator(xbee);
+            SendTimeout = 0;
         }
-        
-        if (cnt == 149)
-        {
-            reading = 3;
-            
-            error = d.readData();
-            Temper = d.readTemperature();
-            Humi = d.readHumidity();
-                
-            send_data_to_coordinator(xbee);        
-        }  
+        printf("OK\r\n");
+        wait_ms(500);
+        led = 0;
+        wait_ms(500);
+        SendTimeout++;
     }
+
     delete(log_serial);
 }
 
 void send_temp_and_hum()
 {
-    XBeeZB xbee = XBeeZB(RADIO_TX, RADIO_RX, RADIO_RESET, NC, NC, 9600);
     
-    reading = 3;
-    
-    d.readData();
-    Temper = d.readTemperature();
-    Humi = d.readHumidity(); 
-    
-    //send_data_to_coordinator(xbee);
 }
